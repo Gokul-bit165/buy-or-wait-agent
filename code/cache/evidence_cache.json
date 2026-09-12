@@ -1,0 +1,20 @@
+{
+  "images": {
+    "image_01": {"event_id": "event_253", "amount": "4365000", "currency": "IDR", "note": "August 2019 net salary payslip — Net Pay line"},
+    "image_02": {"event_id": "event_1442", "amount": "100000", "currency": "INR", "note": "Rent receipt — Balance Due line (outstanding rent balance)"},
+    "image_03": {"event_id": "event_1545", "amount": "41272.0", "currency": "INR", "note": "Grocery bill of supply — Net Amount / Cash Paid"},
+    "image_04": {"event_id": "event_1700", "amount": "2854.00", "currency": "INR", "note": "Delivery order — Item Bill total (verified by summing line items)"},
+    "image_05": {"event_id": "event_1786", "amount": "822.05", "currency": "INR", "note": "Telecom bill — settlement_date (2026-02-09) is after the 06-Feb-2026 due date, so the post-due-date amount applies"},
+    "image_06": {"event_id": "event_3051", "amount": "1995.00", "currency": "INR", "note": "Grocery tax invoice — Total"},
+    "image_07": {"event_id": "event_3231", "amount": "8528", "currency": "INR", "note": "Restaurant tax invoice — stamped/rounded Grand Total (Rs)"},
+    "image_08": {"event_id": "event_4535", "amount": "15339.00", "currency": "INR", "note": "Property maintenance receipt — Total Amount Received"},
+    "image_09": {"event_id": "event_5170", "amount": "723.00", "currency": "INR", "note": "Water bill receipt — Total Amount Received"},
+    "image_10": {"event_id": "event_6033", "amount": "79679.26", "currency": "INR", "note": "Large grocery tax invoice — Balance Due (pending)"},
+    "image_11": {"event_id": "event_6859", "amount": "3650.00", "currency": "INR", "note": "Hospital provisional bill — Balance (unpaid)"},
+    "image_12": {"event_id": "event_7307", "amount": "33.50", "currency": "USD", "note": "Taxi receipt — Total (not the $40 cash tendered)"},
+    "image_13": {"event_id": "event_7941", "amount": "2298", "currency": "INR", "note": "Tote bag order confirmation — Total paid"},
+    "image_14": {"event_id": "event_9421", "amount": "4543.00", "currency": "INR", "note": "Handwritten pharmacy bill — sum of legible line items (1500+724+796+550+303+670)"},
+    "image_15": {"event_id": "event_9806", "amount": "9968.00", "currency": "INR", "note": "Airline invoice — Grand Total (Incl Taxes)"},
+    "image_16": {"event_id": "event_10521", "amount": "393.22", "currency": "INR", "note": "EV charging invoice — Total"}
+  }
+}
