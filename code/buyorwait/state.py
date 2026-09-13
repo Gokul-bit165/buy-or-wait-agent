@@ -160,7 +160,18 @@ def _detect_backbone(items: List[tuple], prefer_long: bool = False,
         # keep scanning forward without extending the chain from this item.
     if len(chain) < min_occurrences:
         return None
-    return chain, dominant
+    # `dominant` is a classification label (which coarse family of cadences
+    # this chain belongs to), not itself an observed interval -- it is only
+    # used above to decide which occurrences belong together. The actual
+    # forward-projection interval must instead come from the chain's own
+    # observed gaps, or a genuinely 10-day cadence (e.g.) gets forecast as
+    # if it were 7-day just because both fall in the same classification
+    # bucket. The median is robust to the occasional irregular gap the
+    # chain-walk above already tolerates.
+    chain_dates = [t[2] for t in chain]
+    chain_gaps = [(chain_dates[i + 1] - chain_dates[i]).days for i in range(len(chain_dates) - 1)]
+    interval_days = round(statistics.median(chain_gaps))
+    return chain, interval_days
 
 
 def _add_months(date: dt.date, months: int) -> dt.date:

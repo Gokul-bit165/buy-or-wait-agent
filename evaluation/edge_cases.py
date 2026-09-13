@@ -117,6 +117,65 @@ def test_duplicate_event_backbone_dedup():
     check("duplicate_event/interval_stays_monthly", interval == 30, interval)
 
 
+def test_exact_10day_cadence_projects_every_10_days_not_7():
+    # _bucket() classifies any 5-10 day gap into the same "weekly" family,
+    # but the actual forward-projection interval must come from the
+    # chain's own observed gaps, not that classification constant.
+    from buyorwait.state import _detect_backbone
+    base = dt.date(2024, 1, 1)
+    items = [(None, Decimal("100"), base + dt.timedelta(days=10 * i)) for i in range(6)]
+    chain, interval = _detect_backbone(items)
+    check("exact_10day_cadence/interval_is_true_10_not_bucket_7", interval == 10, interval)
+    check("exact_10day_cadence/full_chain_kept", len(chain) == 6, len(chain))
+
+
+def test_exact_7day_cadence_remains_7():
+    from buyorwait.state import _detect_backbone
+    base = dt.date(2024, 1, 1)
+    items = [(None, Decimal("100"), base + dt.timedelta(days=7 * i)) for i in range(6)]
+    chain, interval = _detect_backbone(items)
+    check("exact_7day_cadence/interval_remains_7", interval == 7, interval)
+
+
+def test_exact_14day_cadence_remains_14():
+    from buyorwait.state import _detect_backbone
+    base = dt.date(2024, 1, 1)
+    items = [(None, Decimal("100"), base + dt.timedelta(days=14 * i)) for i in range(6)]
+    chain, interval = _detect_backbone(items)
+    check("exact_14day_cadence/interval_remains_14", interval == 14, interval)
+
+
+def test_irregular_weekly_stream_outlier_median_stays_robust():
+    # Mostly-7-day cadence with a couple of 9-10 day gaps mixed in (mirrors
+    # the dataset's real gig-income pattern) -- the median of the chain's
+    # own gaps should stay close to 7, not be dragged off by the outliers.
+    from buyorwait.state import _detect_backbone
+    base = dt.date(2024, 1, 1)
+    day_gaps = [7, 7, 7, 10, 7, 7, 9, 7, 7]
+    dates = [base]
+    for g in day_gaps:
+        dates.append(dates[-1] + dt.timedelta(days=g))
+    items = [(None, Decimal("100"), d) for d in dates]
+    chain, interval = _detect_backbone(items)
+    check("irregular_weekly_outlier/median_stays_robust_at_7", interval == 7, interval)
+    check("irregular_weekly_outlier/full_chain_kept_despite_outliers", len(chain) == len(items), len(chain))
+
+
+def test_monthly_stream_calendar_stepping_unchanged():
+    # A corrected interval_days that still lands in 27-31 must keep
+    # monthly=True and calendar-month advancement (Jan31 -> Feb28 -> Mar31),
+    # unaffected by the true-median-gap change.
+    stream = RecurringStream(category="rent", direction="debit", amount=Decimal("1000"),
+                              interval_days=30, monthly=True, next_date=dt.date(2023, 1, 31),
+                              anchor_event_id="e1", flexibility="fixed", minimum_allowed_amount=None)
+    d1 = stream.advance(dt.date(2023, 1, 31))
+    d2 = stream.advance(d1)
+    check("monthly_calendar_stepping/jan31_to_feb28", d1 == dt.date(2023, 2, 28), d1)
+    # _add_months steps from the CURRENT date's day-of-month (28), not the
+    # original anchor day (31) -- existing, unchanged behavior.
+    check("monthly_calendar_stepping/feb28_to_mar28", d2 == dt.date(2023, 3, 28), d2)
+
+
 def test_blank_image_amount_resolved_from_cache():
     store = EvidenceStore(REPO_ROOT / "dataset", REPO_ROOT / "code" / "cache" / "evidence_cache.json")
     from buyorwait.io_data import ImageRef
