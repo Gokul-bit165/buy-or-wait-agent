@@ -29,25 +29,26 @@ class Candidate:
 def _eligible_spending_actions(state: FinancialState) -> List[dict]:
     profile = state.profile
     actions = []
-    for category, stream in state.streams.items():
-        if stream.flexibility == "fixed":
-            continue
+    for category, stream_list in state.streams.items():
         if category in profile.protect:
             continue
-        can_reduce = (stream.flexibility in ("reducible", "reducible_or_stoppable")
-                      and category in profile.willing_reduce
-                      and stream.minimum_allowed_amount is not None
-                      and stream.minimum_allowed_amount < stream.amount)
-        can_stop = (stream.flexibility in ("stoppable", "reducible_or_stoppable")
-                    and category in profile.willing_stop)
-        if can_reduce:
-            actions.append({"event_id": stream.anchor_event_id, "category": category,
-                             "kind": "reduce", "new_amount": stream.minimum_allowed_amount,
-                             "description": _describe(stream)})
-        if can_stop:
-            actions.append({"event_id": stream.anchor_event_id, "category": category,
-                             "kind": "stop", "new_amount": Decimal(0),
-                             "description": _describe(stream)})
+        for stream in stream_list:
+            if stream.flexibility == "fixed":
+                continue
+            can_reduce = (stream.flexibility in ("reducible", "reducible_or_stoppable")
+                          and category in profile.willing_reduce
+                          and stream.minimum_allowed_amount is not None
+                          and stream.minimum_allowed_amount < stream.amount)
+            can_stop = (stream.flexibility in ("stoppable", "reducible_or_stoppable")
+                        and category in profile.willing_stop)
+            if can_reduce:
+                actions.append({"event_id": stream.anchor_event_id, "category": category,
+                                 "kind": "reduce", "new_amount": stream.minimum_allowed_amount,
+                                 "description": _describe(stream)})
+            if can_stop:
+                actions.append({"event_id": stream.anchor_event_id, "category": category,
+                                 "kind": "stop", "new_amount": Decimal(0),
+                                 "description": _describe(stream)})
     # Deterministic order: reduce variants before stop variants, by category.
     actions.sort(key=lambda a: (a["category"], 0 if a["kind"] == "reduce" else 1))
     return actions

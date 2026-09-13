@@ -1,6 +1,6 @@
 # Usage Report — Buy or Wait?
 
-Final full-dataset run: 250 requests processed in 0.39s.
+Final full-dataset run: 250 requests processed in 5.04s.
 
 ## Model calls
 

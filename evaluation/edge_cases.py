@@ -189,7 +189,7 @@ def test_no_safe_date_within_90_days():
                               interval_days=30, monthly=True, next_date=req_date,
                               anchor_event_id="e1", flexibility="fixed",
                               minimum_allowed_amount=None)
-    state = make_state(balance="2000", min_balance="1000", streams={"rent": stream})
+    state = make_state(balance="2000", min_balance="1000", streams={"rent": [stream]})
     result = run_forecast(state, req_date, Decimal("50000"))
     check("no_safe_date/earliest_is_none", result.earliest_date_for_full_payment is None)
     check("no_safe_date/amount_safe_capped_low", result.amount_safe_to_pay < Decimal("2000"))
@@ -201,7 +201,7 @@ def test_flexible_spending_reduction_unlocks_amount():
                               interval_days=30, monthly=True, next_date=req_date,
                               anchor_event_id="e1", flexibility="reducible",
                               minimum_allowed_amount=Decimal("100"))
-    state = make_state(balance="1600", min_balance="1000", streams={"dining": stream})
+    state = make_state(balance="1600", min_balance="1000", streams={"dining": [stream]})
     base = run_forecast(state, req_date, Decimal("600"))
     reduced = run_forecast(state, req_date, Decimal("600"),
                             spending_changes={"e1": Decimal("100")})
@@ -251,6 +251,175 @@ def test_pending_credit_not_counted():
     # state.py's discrete-event filter explicitly skips pending credits.
     check("pending_credit/direction_and_status_would_be_skipped",
           ev.direction == "credit" and ev.status == "pending")
+
+
+def _make_dataset(events):
+    from buyorwait.io_data import Dataset
+    profile = make_profile(min_balance="1000")
+    events_by_user = {"u": events}
+    events_by_id = {e.event_id: e for e in events}
+    return Dataset(profiles={"u": profile}, events=events_by_id, events_by_user=events_by_user,
+                    rates=[], requests=[], payment_options_by_request={}, messages=[], images=[])
+
+
+def _build_state(events, request_date):
+    from buyorwait.state import build_financial_state
+    dataset = _make_dataset(events)
+    fx = FxTable([])
+    evidence = EvidenceStore(REPO_ROOT, REPO_ROOT / "does_not_exist_cache.json")
+    return build_financial_state(dataset, "u", request_date, fx, evidence)
+
+
+def _mk_event(event_id, category, direction, amount, date, status="settled",
+              linked_event_id="", description="x", event_type="expense",
+              flexibility="fixed", minimum_allowed_amount=None):
+    return Event(event_id=event_id, user_id="u", event_type=event_type, description=description,
+                 category=category, direction=direction, amount=Decimal(amount), currency="USD",
+                 event_date=date, settlement_date=date, status=status,
+                 linked_event_id=linked_event_id, flexibility=flexibility,
+                 minimum_allowed_amount=(Decimal(minimum_allowed_amount)
+                                          if minimum_allowed_amount is not None else None))
+
+
+def test_linked_reversal_pair_not_recurring():
+    d0 = dt.date(2025, 1, 1)
+    events = [
+        _mk_event("e1", "shopping", "debit", "583", d0, description="Card charge later reversed"),
+        _mk_event("e2", "shopping", "credit", "583", d0 + dt.timedelta(days=1),
+                  linked_event_id="e1", description="Settled card charge reversal"),
+    ]
+    state = _build_state(events, d0 + dt.timedelta(days=5))
+    check("linked_reversal_pair/no_recurring_stream", "shopping" not in state.streams,
+          state.streams)
+
+
+def test_linked_reimbursement_pair_counted_once_not_recurring():
+    d0 = dt.date(2025, 1, 1)
+    events = [
+        _mk_event("e1", "work_expense", "debit", "200", d0, description="Reimbursable work expense"),
+        _mk_event("e2", "work_expense", "credit", "200", d0 + dt.timedelta(days=10),
+                  linked_event_id="e1", description="Employer expense reimbursement"),
+    ]
+    state = _build_state(events, d0 + dt.timedelta(days=30))
+    check("linked_reimbursement_pair/no_recurring_stream", "work_expense" not in state.streams,
+          state.streams)
+
+
+def test_pending_duplicate_of_settled_excluded():
+    d0 = dt.date(2025, 1, 1)
+    req_date = d0 + dt.timedelta(days=1)
+    events = [
+        _mk_event("e1", "shopping", "debit", "150", d0, status="settled",
+                  description="Original card charge"),
+        _mk_event("e2", "shopping", "debit", "150", req_date + dt.timedelta(days=5),
+                  status="pending", linked_event_id="e1", description="Possible duplicate card charge"),
+    ]
+    state = _build_state(events, req_date)
+    check("pending_duplicate/excluded_from_discrete_events",
+          all(de.event_id != "e2" for de in state.discrete_events), state.discrete_events)
+
+
+def test_failed_then_scheduled_retry_retained():
+    d0 = dt.date(2025, 1, 1)
+    req_date = d0 + dt.timedelta(days=1)
+    events = [
+        _mk_event("e1", "bills", "debit", "150", d0, status="failed",
+                  description="Failed bill payment attempt"),
+        _mk_event("e2", "bills", "debit", "150", req_date + dt.timedelta(days=5),
+                  status="scheduled", linked_event_id="e1", description="Scheduled bill payment retry"),
+    ]
+    state = _build_state(events, req_date)
+    check("failed_then_retry/retry_kept_as_discrete_debit",
+          any(de.event_id == "e2" for de in state.discrete_events), state.discrete_events)
+
+
+def test_two_independent_streams_same_category():
+    base = dt.date(2025, 1, 1)
+    events = []
+    for i in range(4):
+        events.append(_mk_event(f"base{i}", "salary", "credit", "23256000",
+                                 base + dt.timedelta(days=30 * i), description="Base salary"))
+        events.append(_mk_event(f"comm{i}", "salary", "credit", str(8500000 + i * 100000),
+                                 base + dt.timedelta(days=30 * i + 10),
+                                 description="Monthly sales commission"))
+    req_date = base + dt.timedelta(days=95)
+    state = _build_state(events, req_date)
+    check("two_independent_streams/both_detected", len(state.streams.get("salary", [])) == 2,
+          state.streams.get("salary"))
+
+
+def test_same_day_flows_are_netted_not_intraday_ordered():
+    # The dataset carries no intra-day timestamps, so same-day flows are
+    # netted into a single date-granularity checkpoint rather than assumed
+    # to clear in an unfavorable (debit-before-credit) order. This was
+    # deliberately verified against the alternative (conservative intraday
+    # ordering) during Phase 1 hardening and reverted: a real, non-tuned
+    # sample (request_23, an income settlement and an expense dated the
+    # same day) demonstrated the reference implementation nets same-day
+    # flows, so asserting an intraday breach here would encode an
+    # unsupported assumption rather than a verified rule.
+    req_date = dt.date(2025, 1, 1)
+    margin = Decimal("50")
+    min_balance = Decimal("1000")
+    de_debit = DiscreteEvent(date=req_date, signed_amount=-(margin + Decimal("500")),
+                              event_id="d1", category="shopping")
+    de_credit = DiscreteEvent(date=req_date, signed_amount=Decimal("500"),
+                               event_id="c1", category="salary")
+    state = make_state(balance=str(min_balance + margin), min_balance=str(min_balance),
+                        discrete=[de_debit, de_credit])
+    result = run_forecast(state, req_date, Decimal("0"))
+    check("same_day_flows/netted_to_end_of_day_balance",
+          result.suffix_min[0] == min_balance, result.suffix_min[0])
+
+
+def test_same_day_multiple_debits_and_credits():
+    req_date = dt.date(2025, 1, 1)
+    min_balance = Decimal("1000")
+    flows = [
+        DiscreteEvent(date=req_date, signed_amount=Decimal("-300"), event_id="d1", category="shopping"),
+        DiscreteEvent(date=req_date, signed_amount=Decimal("-200"), event_id="d2", category="shopping"),
+        DiscreteEvent(date=req_date, signed_amount=Decimal("400"), event_id="c1", category="salary"),
+        DiscreteEvent(date=req_date, signed_amount=Decimal("100"), event_id="c2", category="salary"),
+    ]
+    state = make_state(balance="1500", min_balance=str(min_balance), discrete=flows)
+    result = run_forecast(state, req_date, Decimal("0"))
+    # net = 1500 - 300 - 200 + 400 + 100 = 1500, all same-day flows netted.
+    check("same_day_multiple_flows/netted_end_of_day_balance",
+          result.suffix_min[0] == Decimal("1500"), result.suffix_min[0])
+
+
+def test_90_day_boundary_event_included():
+    req_date = dt.date(2025, 1, 1)
+    boundary_date = req_date + dt.timedelta(days=90)
+    de = DiscreteEvent(date=boundary_date, signed_amount=Decimal("-100"),
+                        event_id="e1", category="shopping")
+    state = make_state(balance="1100", min_balance="1000", discrete=[de])
+    result = run_forecast(state, req_date, Decimal("0"))
+    check("boundary_event/day_90_event_reflected_in_horizon",
+          any(d == boundary_date for d, _ in result.checkpoints), result.checkpoints)
+    check("boundary_event/day_90_dip_lowers_safe_amount",
+          result.suffix_min[0] == Decimal("1000"), result.suffix_min[0])
+
+
+def test_message_priority_settled_beats_newer_estimate():
+    from buyorwait.state import _apply_evidence
+    stream = RecurringStream(category="salary", direction="credit", amount=Decimal("5000"),
+                              interval_days=30, monthly=True, next_date=dt.date(2025, 3, 1),
+                              anchor_event_id="e1", flexibility="fixed", minimum_allowed_amount=None)
+    streams = {"salary": [stream]}
+    store = EvidenceStore(REPO_ROOT, REPO_ROOT / "does_not_exist_cache.json")
+    store.salary_facts["u"] = [
+        SalaryFact(user_id="u", kind="increase", amount=Decimal("6000"), currency="USD",
+                   effective_date=dt.date(2025, 1, 1), sent_at=dt.date(2025, 1, 1),
+                   certainty="confirmed"),
+        SalaryFact(user_id="u", kind="decrease", amount=Decimal("4000"), currency="USD",
+                   effective_date=dt.date(2025, 2, 1), sent_at=dt.date(2025, 2, 1),
+                   certainty="estimate"),
+    ]
+    fx = FxTable([])
+    _apply_evidence(streams, store, "u", "USD", fx, dt.date(2025, 2, 15))
+    check("message_priority/confirmed_not_overwritten_by_later_estimate",
+          streams["salary"][0].amount == Decimal("6000"), streams["salary"][0].amount)
 
 
 def main() -> int:

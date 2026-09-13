@@ -9,6 +9,11 @@ from typing import Dict, List, Optional, Tuple
 
 from .state import FinancialState
 
+# The forecast horizon is request_date .. request_date + HORIZON_DAYS,
+# INCLUSIVE of both endpoints (91 distinct calendar checkpoints when events
+# land on every day). This is the one interpretation of "the next 90 days"
+# implemented here; a request-day event is always included, since a payment
+# made on request_date must itself be validated against the same horizon.
 HORIZON_DAYS = 90
 
 
@@ -22,25 +27,26 @@ def _stream_occurrences(state: FinancialState, request_date: dt.date,
     for de in state.discrete_events:
         discrete_dates_by_category.setdefault(de.category, []).append(de.date)
 
-    for category, stream in state.streams.items():
-        override = spending_changes.get(stream.anchor_event_id)
-        amount = stream.amount
-        if override == "stop":
-            amount = Decimal(0)
-        elif isinstance(override, Decimal):
-            amount = override
-
-        date = stream.next_date
+    for category, stream_list in state.streams.items():
         nearby = discrete_dates_by_category.get(category, [])
-        while date <= horizon_end:
-            if stream.end_date is not None and date > stream.end_date:
-                break
-            if date >= request_date:
-                skip = any(abs((date - d).days) <= 5 for d in nearby)
-                if not skip and amount != 0:
-                    signed = amount if stream.direction == "credit" else -amount
-                    occurrences.append((date, signed))
-            date = stream.advance(date)
+        for stream in stream_list:
+            override = spending_changes.get(stream.anchor_event_id)
+            amount = stream.amount
+            if override == "stop":
+                amount = Decimal(0)
+            elif isinstance(override, Decimal):
+                amount = override
+
+            date = stream.next_date
+            while date <= horizon_end:
+                if stream.end_date is not None and date > stream.end_date:
+                    break
+                if date >= request_date:
+                    skip = any(abs((date - d).days) <= 5 for d in nearby)
+                    if not skip and amount != 0:
+                        signed = amount if stream.direction == "credit" else -amount
+                        occurrences.append((date, signed))
+                date = stream.advance(date)
     return occurrences
 
 
@@ -50,7 +56,18 @@ def _checkpoints(state: FinancialState, request_date: dt.date,
                   ) -> List[Tuple[dt.date, Decimal]]:
     """Returns sorted (date, cumulative_balance) checkpoints from
     request_date to request_date+HORIZON_DAYS inclusive, always including a
-    checkpoint at request_date itself."""
+    checkpoint at request_date itself. Same-day flows are netted before the
+    checkpoint is computed (date-granularity accounting): this was
+    deliberately re-verified against a debit-before-credit conservative
+    ordering during Phase 1 hardening (see engineering_report.md, "same-day
+    event ordering") and reverted after concrete evidence from a real,
+    non-tuned sample (request_23: an income settlement and an expense dated
+    the same day) showed the reference implementation nets same-day flows
+    rather than assuming an unfavorable intraday clearing order. The dataset
+    provides no intra-day timestamps, so there is no ordering signal to
+    apply conservatism to beyond what "counted on settlement date" already
+    states: a date's flows are all available as of that date.
+    """
     horizon_end = request_date + dt.timedelta(days=HORIZON_DAYS)
     flows: List[Tuple[dt.date, Decimal]] = []
     for de in state.discrete_events:

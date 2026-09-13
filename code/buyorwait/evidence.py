@@ -26,6 +26,13 @@ class SalaryFact:
     currency: Optional[str]
     effective_date: Optional[dt.date]
     sent_at: dt.date
+    # "confirmed" (explicit settlement/amendment) or "estimate" (an
+    # unconfirmed/tentative figure). All current deterministic template
+    # matches are explicit statements, so this always defaults to
+    # "confirmed"; the field exists so a future estimate-worded template can
+    # be classified without changing the conflict-resolution logic in
+    # state.py, which already ranks "confirmed" over "estimate".
+    certainty: str = "confirmed"
 
 
 @dataclass
